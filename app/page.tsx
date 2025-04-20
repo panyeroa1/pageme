@@ -1,3 +1,4 @@
+// src/app/page.tsx (or your component file path)
 "use client"
 
 import { useState, useRef, useEffect } from "react"
@@ -40,6 +41,10 @@ export default function Home() {
         } else if (!result.apiKeyConfigured) {
           // Set error state if API key is missing and not in preview mode
           setError("Gemini API key not configured. Please set GEMINI_API_KEY environment variable.");
+          setStatus(""); // Clear status if error is shown
+        } else {
+          // Clear status if everything is configured okay
+          setStatus("");
         }
       } catch (err: any) { // Catch potential errors during the check
         console.error("Error checking API configuration:", err);
@@ -85,6 +90,7 @@ export default function Home() {
   });
 
   // --- Improved HTML Generation Handler ---
+  // This function now expects generateHTML action to return { html?, error? }
   const handleGenerateHTML = async () => {
     if (!selectedPersona) {
       setError("Please select a page persona");
@@ -101,7 +107,7 @@ export default function Home() {
     if (iframeRef.current) {
       try {
         // Using srcdoc is generally safer and cleaner for setting initial/blank content
-        iframeRef.current.srcdoc = '<html><head></head><body></body></html>';
+        iframeRef.current.srcdoc = '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body></body></html>';
       } catch (iframeClearError) {
         console.error("Error clearing iframe:", iframeClearError);
         // Non-critical, proceed with generation
@@ -140,19 +146,21 @@ export default function Home() {
       // --- Handle Actual Generation Mode ---
       else {
         setStatus("Calling Gemini API to generate HTML...");
-        // The server action `generateHTML` should handle its own internal errors
+        // The server action `generateHTML` SHOULD handle its own internal errors
         // and always return { html: string | null, error: string | null }
         const result = await generateHTML(selectedPersona, userPrompt, additionalInstructions);
 
-        if (result.error) {
+        // Check the result from the server action
+        if (result?.error) {
           // Error message came from the server action
           generationError = result.error; // Use the specific error from the action
-        } else if (result.html) {
+        } else if (result?.html) {
           // Success case
           htmlToDisplay = result.html;
           finalStatus = "Generation complete";
         } else {
-          // No error reported, but no HTML received - action might have failed silently
+          // No error reported, but no HTML received - action might have failed silently or returned unexpected format
+          console.warn("generateHTML action returned unexpected result:", result);
           generationError = "Generation process finished but returned no HTML content or specific error.";
         }
       }
@@ -190,14 +198,15 @@ export default function Home() {
              setError(""); // No error in generation itself
          }
       } else {
-         // Should not happen if logic above is correct, but as a fallback
+         // Fallback: Should not happen if logic above is correct
          setError("An unexpected issue occurred: No HTML was generated and no error was reported.");
          setStatus("Generation failed");
       }
 
-    } catch (err: any) { // Catch errors from finding persona or unexpected issues
-      console.error("Unhandled error in handleGenerateHTML:", err);
+    } catch (err: any) { // Catch errors from finding persona OR unhandled exceptions thrown by await generateHTML(...) itself
+      console.error("Unhandled error in handleGenerateHTML during action call or persona lookup:", err);
       // Use the error message if available, otherwise a generic fallback
+      // This is where "Failed to generate HTML content" likely originates if the server action throws raw exceptions
       setError(err?.message || "An unexpected error occurred during the generation process.");
       setStatus("Generation failed");
       setGeneratedHTML(""); // Clear HTML state on failure
@@ -208,7 +217,7 @@ export default function Home() {
   };
 
 
-  // --- JSX Structure (Mostly unchanged, but added keys and minor improvements) ---
+  // --- JSX Structure ---
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm">
@@ -220,29 +229,33 @@ export default function Home() {
 
       <main className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
         {/* Status/Error Banners */}
-        {isPreviewMode && !error && ( // Show preview mode only if no major error exists
+        {/* Show Preview Mode banner only if relevant and no other specific error is present */}
+        {isPreviewMode && !error && (
           <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-700" role="status">
             <p className="font-medium">Preview Mode Active</p>
-            <p>{status || "Only sample HTML templates will be generated."}</p> {/* Show current status */}
+            <p>{status || "Only sample HTML templates will be generated."}</p>
             <p className="mt-1 text-sm">Deploy the application with a valid GEMINI_API_KEY to generate live content.</p>
           </div>
         )}
 
-        {!isPreviewMode && !apiKeyConfigured && ( // Show API key warning if relevant
+        {/* Show API Key Warning only if relevant */}
+        {!isPreviewMode && !apiKeyConfigured && (
           <div className="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700" role="alert">
             <p className="font-medium">API Key Not Configured</p>
-            <p>{error || "The Gemini API key is not set. Please add the GEMINI_API_KEY environment variable."}</p> {/* Show error message */}
+            <p>{error || "The Gemini API key is not set. Please add the GEMINI_API_KEY environment variable."}</p>
             <p className="mt-1 text-sm">Generation will use sample templates until the key is configured.</p>
           </div>
         )}
 
-         {/* General Error Display (for generation errors etc.) */}
-        {error && (!isPreviewMode && apiKeyConfigured) && ( // Show general errors only if not covered by the above specific banners
+        {/* General Error Display (for actual generation errors etc.) */}
+        {/* Show general errors only if NOT in preview mode AND the API key IS configured (or error isn't the config one) */}
+        {error && (!isPreviewMode || apiKeyConfigured) && error !== "Gemini API key not configured. Please set GEMINI_API_KEY environment variable." && (
            <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-400 text-red-700" role="alert">
              <p className="font-medium">Error Occurred</p>
-             <p>{error}</p>
+             <p>{error}</p> {/* Display the specific error message state */}
            </div>
          )}
+
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
           {/* Left sidebar */}
@@ -255,7 +268,7 @@ export default function Home() {
             <div className="overflow-y-auto max-h-[calc(100vh-18rem)] h-[calc(100vh-18rem)]">
               {sortedCategories.map((category) => (
                 <div key={category} className="border-b border-gray-200 last:border-b-0">
-                  <h3 className="sticky top-0 bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-800 z-10">{category}</h3>
+                  <h3 className="sticky top-0 bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-800 z-10" id={`category-heading-${category}`}>{category}</h3>
                   <ul role="radiogroup" aria-labelledby={`category-heading-${category}`} className="divide-y divide-gray-200">
                      {personasByCategory[category].map((persona) => (
                       <li key={persona.id}>
@@ -271,10 +284,11 @@ export default function Home() {
                               setError(""); // Clear error when selection changes
                               setStatus(""); // Clear status when selection changes
                             }}
+                            aria-describedby={`persona-desc-${persona.id}`}
                           />
                           <div className="ml-3 text-sm">
                             <span className="font-medium text-gray-900">{persona.name}</span>
-                            <p className="text-xs text-gray-500">{persona.description}</p>
+                            <p id={`persona-desc-${persona.id}`} className="text-xs text-gray-500">{persona.description}</p>
                           </div>
                         </label>
                       </li>
@@ -307,6 +321,7 @@ export default function Home() {
                     value={userPrompt}
                     onChange={(e) => setUserPrompt(e.target.value)}
                   />
+                  <p className="mt-1 text-xs text-gray-500">Describe the main purpose or key elements you want.</p>
                 </div>
 
                 <div>
@@ -321,9 +336,10 @@ export default function Home() {
                     value={additionalInstructions}
                     onChange={(e) => setAdditionalInstructions(e.target.value)}
                   />
+                   <p className="mt-1 text-xs text-gray-500">Specify styling, content constraints, or specific features.</p>
                 </div>
 
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-y-2">
                    <button
                     type="submit" // Use type="submit" for form
                     className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150"
@@ -344,7 +360,7 @@ export default function Home() {
                   </button>
                   {/* Display current status during/after generation */}
                   {status && !error && ( // Show status only if there's no overriding error
-                    <div className="ml-4 p-2 bg-blue-50 rounded-md text-sm text-blue-700" role="status">
+                    <div className="ml-4 p-2 bg-blue-50 rounded-md text-sm text-blue-700 flex-shrink-0" role="status">
                       {status}
                     </div>
                   )}
@@ -354,13 +370,13 @@ export default function Home() {
 
             {/* Preview area */}
             <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <div className="p-4 border-b border-gray-200 flex justify-between items-center gap-4 flex-wrap">
                 <div>
                   <h2 className="text-lg font-medium text-gray-900">Preview</h2>
                   <p className="text-sm text-gray-500">Mobile viewport simulation</p>
                 </div>
                 {/* Enable copy button only if HTML exists and generation wasn't a failure */}
-                {generatedHTML && !error && (
+                {generatedHTML && (!error || error.startsWith("Preview Error:")) && ( // Allow copy even if preview fails
                   <button
                     type="button"
                     className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
@@ -391,7 +407,7 @@ export default function Home() {
                     // Security sandbox - adjust as needed, allow-scripts is often necessary for previews
                     sandbox="allow-same-origin allow-scripts allow-forms"
                     // Use srcDoc for initial blank state
-                    srcDoc={'<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="display: flex; justify-content: center; align-items: center; height: 100%; color: #9ca3af; font-family: sans-serif;"><div>Select persona and generate</div></body></html>'}
+                    srcDoc={'<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="display: flex; justify-content: center; align-items: center; height: 100%; color: #9ca3af; font-family: sans-serif; text-align: center; padding: 20px;"><div>Select a persona and click Generate to see a preview here.</div></body></html>'}
                   ></iframe>
                 </div>
               </div>
